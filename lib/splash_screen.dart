@@ -2,21 +2,21 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:webview_flutter/webview_flutter.dart' show WebViewController, NavigationDelegate, JavaScriptMode, NavigationDecision, WebViewWidget;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:webview_flutter/webview_flutter.dart'
+    show
+    WebViewController,
+    NavigationDelegate,
+    JavaScriptMode,
+    NavigationDecision,
+    WebViewWidget;
 import 'game_screen.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  TraceMind — splash_screen.dart
-//
-//  Full cinematic splash / get-started screen:
-//    • Animated particle field (floating dots)
-//    • Animated logo with gradient shimmer
-//    • Tagline reveal + pulse
-//    • "START GAME" button with neon glow press effect
-//    • "ABOUT" bottom sheet
-//    • "PRIVACY POLICY" opens inline HTML webview sheet
-//    • All dark-neon aesthetic matching game_screen
+//  TraceMind — splash_screen.dart  (v2 — Continue Game + SharedPreferences)
 // ═══════════════════════════════════════════════════════════════════════════════
+
+const String _kSavedLevelKey = 'saved_level_index';
 
 // ─── Particle for background ──────────────────────────────────────────────────
 
@@ -24,9 +24,12 @@ class _BgParticle {
   double x, y, vx, vy, size, opacity;
   Color color;
   _BgParticle({
-    required this.x, required this.y,
-    required this.vx, required this.vy,
-    required this.size, required this.opacity,
+    required this.x,
+    required this.y,
+    required this.vx,
+    required this.vy,
+    required this.size,
+    required this.opacity,
     required this.color,
   });
 }
@@ -35,7 +38,8 @@ class _BgParticle {
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
-  @override State<SplashScreen> createState() => _SplashScreenState();
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
 }
 
 class _SplashScreenState extends State<SplashScreen>
@@ -63,40 +67,56 @@ class _SplashScreenState extends State<SplashScreen>
 
   // ── Button press state ────────────────────────────────────────────────────
   bool _startPressed = false;
+  bool _continuePressed = false;
+
+  // ── Saved game state ──────────────────────────────────────────────────────
+  int _savedLevel = 0;
+  bool _hasSavedGame = false;
 
   @override
   void initState() {
     super.initState();
 
     // Logo: scale up + fade in
-    _acLogo = AnimationController(vsync: this, duration: const Duration(milliseconds: 900));
+    _acLogo = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 900));
     _aLogoScale = Tween<double>(begin: 0.75, end: 1.0)
         .animate(CurvedAnimation(parent: _acLogo, curve: Curves.easeOutCubic));
-    _aLogoFade = CurvedAnimation(parent: _acLogo, curve: Curves.easeOut);
+    _aLogoFade =
+        CurvedAnimation(parent: _acLogo, curve: Curves.easeOut);
 
     // Tagline: fade + slide up (delayed)
-    _acTagline = AnimationController(vsync: this, duration: const Duration(milliseconds: 700));
-    _aTaglineFade  = CurvedAnimation(parent: _acTagline, curve: Curves.easeOut);
+    _acTagline = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 700));
+    _aTaglineFade =
+        CurvedAnimation(parent: _acTagline, curve: Curves.easeOut);
     _aTaglineSlide = Tween<double>(begin: 18.0, end: 0.0)
-        .animate(CurvedAnimation(parent: _acTagline, curve: Curves.easeOutCubic));
+        .animate(
+        CurvedAnimation(parent: _acTagline, curve: Curves.easeOutCubic));
 
     // Buttons: fade + slide up (more delayed)
-    _acButtons = AnimationController(vsync: this, duration: const Duration(milliseconds: 600));
-    _aButtonsFade  = CurvedAnimation(parent: _acButtons, curve: Curves.easeOut);
+    _acButtons = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 600));
+    _aButtonsFade =
+        CurvedAnimation(parent: _acButtons, curve: Curves.easeOut);
     _aButtonsSlide = Tween<double>(begin: 24.0, end: 0.0)
-        .animate(CurvedAnimation(parent: _acButtons, curve: Curves.easeOutCubic));
+        .animate(
+        CurvedAnimation(parent: _acButtons, curve: Curves.easeOutCubic));
 
     // Logo shimmer repeat
     _acLogoShimmer = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 2200))..repeat();
+        vsync: this, duration: const Duration(milliseconds: 2200))
+      ..repeat();
 
     // Grid bg rotation
     _acGrid = AnimationController(
-        vsync: this, duration: const Duration(seconds: 40))..repeat();
+        vsync: this, duration: const Duration(seconds: 40))
+      ..repeat();
 
-    // Pulse for start button
+    // Pulse for buttons
     _acPulse = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 1500))..repeat(reverse: true);
+        vsync: this, duration: const Duration(milliseconds: 1500))
+      ..repeat(reverse: true);
 
     // Staggered entry
     _acLogo.forward();
@@ -107,8 +127,21 @@ class _SplashScreenState extends State<SplashScreen>
       if (mounted) _acButtons.forward();
     });
 
-    // Background particles
-    WidgetsBinding.instance.addPostFrameCallback((_) => _initParticles());
+    // Load saved game + init particles
+    _loadSavedGame();
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _initParticles());
+  }
+
+  Future<void> _loadSavedGame() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getInt(_kSavedLevelKey) ?? 0;
+    if (mounted) {
+      setState(() {
+        _savedLevel = saved;
+        _hasSavedGame = saved > 0; // only show Continue if past level 0
+      });
+    }
   }
 
   void _initParticles() {
@@ -119,15 +152,17 @@ class _SplashScreenState extends State<SplashScreen>
       const Color(0xFF00FFB0),
       const Color(0xFFFFCC00),
     ];
-    _particles = List.generate(38, (_) => _BgParticle(
-      x: _rng.nextDouble() * sz.width,
-      y: _rng.nextDouble() * sz.height,
-      vx: (_rng.nextDouble() - 0.5) * 0.4,
-      vy: -0.2 - _rng.nextDouble() * 0.4,
-      size: 1.5 + _rng.nextDouble() * 3.0,
-      opacity: 0.15 + _rng.nextDouble() * 0.35,
-      color: colors[_rng.nextInt(colors.length)],
-    ));
+    _particles = List.generate(
+        38,
+            (_) => _BgParticle(
+          x: _rng.nextDouble() * sz.width,
+          y: _rng.nextDouble() * sz.height,
+          vx: (_rng.nextDouble() - 0.5) * 0.4,
+          vy: -0.2 - _rng.nextDouble() * 0.4,
+          size: 1.5 + _rng.nextDouble() * 3.0,
+          opacity: 0.15 + _rng.nextDouble() * 0.35,
+          color: colors[_rng.nextInt(colors.length)],
+        ));
 
     _particleTicker = Timer.periodic(const Duration(milliseconds: 30), (_) {
       if (!mounted) return;
@@ -136,9 +171,12 @@ class _SplashScreenState extends State<SplashScreen>
         for (final p in _particles) {
           p.x += p.vx;
           p.y += p.vy;
-          if (p.y < -10) { p.y = sz2.height + 10; p.x = _rng.nextDouble() * sz2.width; }
-          if (p.x < -10) { p.x = sz2.width + 10; }
-          if (p.x > sz2.width + 10) { p.x = -10; }
+          if (p.y < -10) {
+            p.y = sz2.height + 10;
+            p.x = _rng.nextDouble() * sz2.width;
+          }
+          if (p.x < -10) p.x = sz2.width + 10;
+          if (p.x > sz2.width + 10) p.x = -10;
         }
       });
     });
@@ -146,23 +184,47 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   void dispose() {
-    _acLogo.dispose(); _acTagline.dispose(); _acButtons.dispose();
-    _acLogoShimmer.dispose(); _acGrid.dispose(); _acPulse.dispose();
+    _acLogo.dispose();
+    _acTagline.dispose();
+    _acButtons.dispose();
+    _acLogoShimmer.dispose();
+    _acGrid.dispose();
+    _acPulse.dispose();
     _particleTicker?.cancel();
     super.dispose();
   }
 
   // ── Navigate to game ─────────────────────────────────────────────────────
 
-  void _startGame() async {
+  void _newGame() async {
     HapticFeedback.mediumImpact();
     setState(() => _startPressed = true);
+    // Reset saved level to 0 for a new game
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kSavedLevelKey, 0);
     await Future.delayed(const Duration(milliseconds: 180));
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
-        pageBuilder: (_, anim, __) => const GameScreen(),
-        transitionsBuilder: (_, anim, __, child) => FadeTransition(opacity: anim, child: child),
+        pageBuilder: (_, anim, __) => const GameScreen(startLevel: 0),
+        transitionsBuilder: (_, anim, __, child) =>
+            FadeTransition(opacity: anim, child: child),
+        transitionDuration: const Duration(milliseconds: 500),
+      ),
+    );
+  }
+
+  void _continueGame() async {
+    HapticFeedback.mediumImpact();
+    setState(() => _continuePressed = true);
+    await Future.delayed(const Duration(milliseconds: 180));
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      PageRouteBuilder(
+        pageBuilder: (_, anim, __) =>
+            GameScreen(startLevel: _savedLevel),
+        transitionsBuilder: (_, anim, __, child) =>
+            FadeTransition(opacity: anim, child: child),
         transitionDuration: const Duration(milliseconds: 500),
       ),
     );
@@ -179,7 +241,7 @@ class _SplashScreenState extends State<SplashScreen>
     );
   }
 
-  // ── Privacy policy sheet ──────────────────────────────────────────────────
+  // ── Privacy policy ────────────────────────────────────────────────────────
 
   void _showPrivacyPolicy() {
     Navigator.of(context).push(
@@ -195,9 +257,8 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
-    final sz  = MediaQuery.of(context).size;
-    final sw  = sz.width;
-    final sh  = sz.height;
+    final sz = MediaQuery.of(context).size;
+    final sw = sz.width;
 
     return Scaffold(
       backgroundColor: const Color(0xFF02020A),
@@ -215,19 +276,26 @@ class _SplashScreenState extends State<SplashScreen>
           // ── Floating particles ──
           ..._particles.map((p) => Positioned(
             left: p.x - p.size / 2,
-            top:  p.y - p.size / 2,
+            top: p.y - p.size / 2,
             child: Container(
-              width: p.size, height: p.size,
+              width: p.size,
+              height: p.size,
               decoration: BoxDecoration(
                 color: p.color.withOpacity(p.opacity),
                 shape: BoxShape.circle,
-                boxShadow: [BoxShadow(color: p.color.withOpacity(p.opacity * 0.6), blurRadius: 6)],
+                boxShadow: [
+                  BoxShadow(
+                      color: p.color.withOpacity(p.opacity * 0.6),
+                      blurRadius: 6)
+                ],
               ),
             ),
           )),
 
           // ── Scanline + vignette overlay ──
-          Positioned.fill(child: IgnorePointer(child: CustomPaint(painter: _VignettePainter()))),
+          Positioned.fill(
+              child: IgnorePointer(
+                  child: CustomPaint(painter: _VignettePainter()))),
 
           // ── Main content ──
           SafeArea(
@@ -243,13 +311,10 @@ class _SplashScreenState extends State<SplashScreen>
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        // Icon mark
                         _buildLogoMark(sw),
                         const SizedBox(height: 20),
-                        // Word mark
                         _buildWordMark(),
                         const SizedBox(height: 10),
-                        // Tagline
                         FadeTransition(
                           opacity: _aTaglineFade,
                           child: AnimatedBuilder(
@@ -290,7 +355,7 @@ class _SplashScreenState extends State<SplashScreen>
     );
   }
 
-  // ─── Logo mark — animated mirror grid icon ────────────────────────────────
+  // ─── Logo mark ────────────────────────────────────────────────────────────
 
   Widget _buildLogoMark(double sw) {
     return AnimatedBuilder(
@@ -298,7 +363,8 @@ class _SplashScreenState extends State<SplashScreen>
       builder: (_, __) {
         final p = _acPulse.value;
         return Container(
-          width: 82, height: 82,
+          width: 82,
+          height: 82,
           decoration: BoxDecoration(
             color: const Color(0xFF07071C),
             borderRadius: BorderRadius.circular(22),
@@ -313,11 +379,13 @@ class _SplashScreenState extends State<SplashScreen>
             boxShadow: [
               BoxShadow(
                 color: const Color(0xFF00D4FF).withOpacity(0.18 + 0.12 * p),
-                blurRadius: 24 + 12 * p, spreadRadius: 2,
+                blurRadius: 24 + 12 * p,
+                spreadRadius: 2,
               ),
               BoxShadow(
                 color: const Color(0xFFBB55FF).withOpacity(0.10 + 0.10 * p),
-                blurRadius: 40 + 20 * p, spreadRadius: 4,
+                blurRadius: 40 + 20 * p,
+                spreadRadius: 4,
               ),
             ],
           ),
@@ -371,11 +439,16 @@ class _SplashScreenState extends State<SplashScreen>
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+          padding:
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
           decoration: BoxDecoration(
             border: Border(
-              left:  BorderSide(color: const Color(0xFF00D4FF).withOpacity(0.4), width: 1.5),
-              right: BorderSide(color: const Color(0xFFBB55FF).withOpacity(0.4), width: 1.5),
+              left: BorderSide(
+                  color: const Color(0xFF00D4FF).withOpacity(0.4),
+                  width: 1.5),
+              right: BorderSide(
+                  color: const Color(0xFFBB55FF).withOpacity(0.4),
+                  width: 1.5),
             ),
           ),
           child: const Text(
@@ -400,15 +473,24 @@ class _SplashScreenState extends State<SplashScreen>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // START GAME
-          _buildStartBtn(sw),
+          // CONTINUE GAME (shown only if there's a saved game beyond level 0)
+          if (_hasSavedGame) ...[
+            _buildContinueBtn(sw),
+            const SizedBox(height: 12),
+          ],
+          // NEW GAME
+          _buildNewGameBtn(sw),
           const SizedBox(height: 14),
           // ABOUT + PRIVACY in a row
           Row(
             children: [
-              Expanded(child: _buildSecondaryBtn('ABOUT', Icons.info_outline_rounded, _showAbout)),
+              Expanded(
+                  child: _buildSecondaryBtn(
+                      'ABOUT', Icons.info_outline_rounded, _showAbout)),
               const SizedBox(width: 10),
-              Expanded(child: _buildSecondaryBtn('PRIVACY', Icons.shield_outlined, _showPrivacyPolicy)),
+              Expanded(
+                  child: _buildSecondaryBtn('PRIVACY',
+                      Icons.shield_outlined, _showPrivacyPolicy)),
             ],
           ),
         ],
@@ -416,11 +498,106 @@ class _SplashScreenState extends State<SplashScreen>
     );
   }
 
-  Widget _buildStartBtn(double sw) {
+  // ─── Continue Game button ─────────────────────────────────────────────────
+
+  Widget _buildContinueBtn(double sw) {
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _continuePressed = true),
+      onTapCancel: () => setState(() => _continuePressed = false),
+      onTapUp: (_) => _continueGame(),
+      child: AnimatedBuilder(
+        animation: _acPulse,
+        builder: (_, __) {
+          final p = _acPulse.value;
+          return AnimatedScale(
+            scale: _continuePressed ? 0.95 : 1.0,
+            duration: const Duration(milliseconds: 80),
+            child: Container(
+              width: double.infinity,
+              height: 62,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    Color.lerp(const Color(0xFF00CC88),
+                        const Color(0xFF00FF99), p)!,
+                    Color.lerp(const Color(0xFF00AA66),
+                        const Color(0xFF00CC77), p)!,
+                  ],
+                ),
+                borderRadius: BorderRadius.circular(18),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF00FFB0)
+                        .withOpacity(0.35 + 0.20 * p),
+                    blurRadius: 20 + 14 * p,
+                    spreadRadius: 0,
+                  ),
+                  BoxShadow(
+                    color: const Color(0xFF007744)
+                        .withOpacity(0.20 + 0.15 * p),
+                    blurRadius: 32 + 10 * p,
+                    spreadRadius: 2,
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.play_circle_outline_rounded,
+                    color: Colors.white,
+                    size: 26,
+                    shadows: [
+                      Shadow(
+                          color: Colors.white.withOpacity(0.6),
+                          blurRadius: 10)
+                    ],
+                  ),
+                  const SizedBox(width: 8),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'CONTINUE GAME',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 3.5,
+                          shadows: [
+                            Shadow(
+                                color: Colors.white38, blurRadius: 8)
+                          ],
+                        ),
+                      ),
+                      Text(
+                        'LEVEL ${_savedLevel + 1}',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.70),
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 2,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // ─── New Game button ──────────────────────────────────────────────────────
+
+  Widget _buildNewGameBtn(double sw) {
     return GestureDetector(
       onTapDown: (_) => setState(() => _startPressed = true),
       onTapCancel: () => setState(() => _startPressed = false),
-      onTapUp: (_) => _startGame(),
+      onTapUp: (_) => _newGame(),
       child: AnimatedBuilder(
         animation: _acPulse,
         builder: (_, __) {
@@ -434,19 +611,25 @@ class _SplashScreenState extends State<SplashScreen>
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   colors: [
-                    Color.lerp(const Color(0xFF00A8CC), const Color(0xFF0088FF), p)!,
-                    Color.lerp(const Color(0xFF0088FF), const Color(0xFF7700CC), p)!,
+                    Color.lerp(const Color(0xFF00A8CC),
+                        const Color(0xFF0088FF), p)!,
+                    Color.lerp(const Color(0xFF0088FF),
+                        const Color(0xFF7700CC), p)!,
                   ],
                 ),
                 borderRadius: BorderRadius.circular(18),
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFF00D4FF).withOpacity(0.35 + 0.20 * p),
-                    blurRadius: 20 + 14 * p, spreadRadius: 0,
+                    color: const Color(0xFF00D4FF)
+                        .withOpacity(0.35 + 0.20 * p),
+                    blurRadius: 20 + 14 * p,
+                    spreadRadius: 0,
                   ),
                   BoxShadow(
-                    color: const Color(0xFF7700CC).withOpacity(0.20 + 0.15 * p),
-                    blurRadius: 32 + 10 * p, spreadRadius: 2,
+                    color: const Color(0xFF7700CC)
+                        .withOpacity(0.20 + 0.15 * p),
+                    blurRadius: 32 + 10 * p,
+                    spreadRadius: 2,
                   ),
                 ],
               ),
@@ -457,17 +640,23 @@ class _SplashScreenState extends State<SplashScreen>
                     Icons.play_arrow_rounded,
                     color: Colors.white,
                     size: 26,
-                    shadows: [Shadow(color: Colors.white.withOpacity(0.6), blurRadius: 10)],
+                    shadows: [
+                      Shadow(
+                          color: Colors.white.withOpacity(0.6),
+                          blurRadius: 10)
+                    ],
                   ),
                   const SizedBox(width: 8),
                   const Text(
-                    'START GAME',
+                    'NEW GAME',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 15,
                       fontWeight: FontWeight.w900,
                       letterSpacing: 3.5,
-                      shadows: [Shadow(color: Colors.white38, blurRadius: 8)],
+                      shadows: [
+                        Shadow(color: Colors.white38, blurRadius: 8)
+                      ],
                     ),
                   ),
                 ],
@@ -479,7 +668,8 @@ class _SplashScreenState extends State<SplashScreen>
     );
   }
 
-  Widget _buildSecondaryBtn(String label, IconData icon, VoidCallback fn) {
+  Widget _buildSecondaryBtn(
+      String label, IconData icon, VoidCallback fn) {
     return GestureDetector(
       onTap: fn,
       child: Container(
@@ -494,12 +684,13 @@ class _SplashScreenState extends State<SplashScreen>
           children: [
             Icon(icon, color: const Color(0xFF4A5A7A), size: 15),
             const SizedBox(width: 6),
-            Text(label, style: const TextStyle(
-              color: Color(0xFF4A5A7A),
-              fontSize: 10,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 2,
-            )),
+            Text(label,
+                style: const TextStyle(
+                  color: Color(0xFF4A5A7A),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 2,
+                )),
           ],
         ),
       ),
@@ -522,50 +713,57 @@ class _AboutSheet extends StatelessWidget {
         color: const Color(0xFF07071C),
         borderRadius: BorderRadius.circular(28),
         border: Border.all(color: accent.withOpacity(0.25), width: 1.2),
-        boxShadow: [BoxShadow(color: accent.withOpacity(0.08), blurRadius: 48)],
+        boxShadow: [
+          BoxShadow(color: accent.withOpacity(0.08), blurRadius: 48)
+        ],
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Handle
           Container(
-            width: 36, height: 4,
+            width: 36,
+            height: 4,
             decoration: BoxDecoration(
               color: const Color(0xFF1A1A3E),
               borderRadius: BorderRadius.circular(2),
             ),
           ),
           const SizedBox(height: 24),
-
-          // Logo text
           ShaderMask(
             shaderCallback: (b) => const LinearGradient(
-              colors: [Color(0xFF00D4FF), Color(0xFFBB55FF), Color(0xFF00FFB0)],
+              colors: [
+                Color(0xFF00D4FF),
+                Color(0xFFBB55FF),
+                Color(0xFF00FFB0)
+              ],
             ).createShader(b),
-            child: const Text('TRACEMIND', style: TextStyle(
-              color: Colors.white, fontSize: 22,
-              fontWeight: FontWeight.w900, letterSpacing: 6,
-            )),
+            child: const Text('TRACEMIND',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 22,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 6,
+                )),
           ),
           const SizedBox(height: 6),
-          const Text('ESCAPE YOUR REFLECTION', style: TextStyle(
-            color: Color(0xFF2A3A4A), fontSize: 9, letterSpacing: 3.5, fontWeight: FontWeight.w700,
-          )),
-
+          const Text('ESCAPE YOUR REFLECTION',
+              style: TextStyle(
+                color: Color(0xFF2A3A4A),
+                fontSize: 9,
+                letterSpacing: 3.5,
+                fontWeight: FontWeight.w700,
+              )),
           const SizedBox(height: 24),
-
-          // Description
           const Text(
             'TraceMind is a mind-bending puzzle game where you navigate a maze while your clone shadows your every move — with a delay.\n\nOutthink your reflection. Escape before your past catches you.',
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: Color(0xFF4A5A7A), fontSize: 13, height: 1.75,
+              color: Color(0xFF4A5A7A),
+              fontSize: 13,
+              height: 1.75,
             ),
           ),
-
           const SizedBox(height: 24),
-
-          // Stats row
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
@@ -574,39 +772,48 @@ class _AboutSheet extends StatelessWidget {
               _statPill('∞', 'REPLAYS'),
             ],
           ),
-
           const SizedBox(height: 24),
           Container(height: 1, color: const Color(0xFF1A1A3E)),
           const SizedBox(height: 16),
-
-          const Text('Developed by', style: TextStyle(
-            color: Color(0xFF2A3A4A), fontSize: 9, letterSpacing: 2,
-          )),
+          const Text('Developed by',
+              style: TextStyle(
+                  color: Color(0xFF2A3A4A),
+                  fontSize: 9,
+                  letterSpacing: 2)),
           const SizedBox(height: 4),
-          const Text('PATRICIA LN SAGALE LLC', style: TextStyle(
-            color: Color(0xFF4A5A7A), fontSize: 11,
-            fontWeight: FontWeight.w800, letterSpacing: 2,
-          )),
+          const Text('PATRICIA LN SAGALE LLC',
+              style: TextStyle(
+                color: Color(0xFF4A5A7A),
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 2,
+              )),
           const SizedBox(height: 4),
-          const Text('blomnik74@gmail.com', style: TextStyle(
-            color: Color(0xFF00D4FF), fontSize: 11, letterSpacing: 1,
-          )),
-
+          const Text('blomnik74@gmail.com',
+              style: TextStyle(
+                  color: Color(0xFF00D4FF),
+                  fontSize: 11,
+                  letterSpacing: 1)),
           const SizedBox(height: 20),
-
           GestureDetector(
             onTap: () => Navigator.pop(context),
             child: Container(
-              width: double.infinity, height: 46,
+              width: double.infinity,
+              height: 46,
               decoration: BoxDecoration(
                 color: accent.withOpacity(0.08),
                 borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: accent.withOpacity(0.30), width: 1),
+                border:
+                Border.all(color: accent.withOpacity(0.30), width: 1),
               ),
               child: const Center(
-                child: Text('CLOSE', style: TextStyle(
-                  color: accent, fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 3,
-                )),
+                child: Text('CLOSE',
+                    style: TextStyle(
+                      color: accent,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 3,
+                    )),
               ),
             ),
           ),
@@ -617,23 +824,28 @@ class _AboutSheet extends StatelessWidget {
 
   Widget _statPill(String val, String label) {
     return Column(children: [
-      Text(val, style: const TextStyle(
-        color: Color(0xFF00D4FF), fontSize: 20, fontWeight: FontWeight.w900,
-        shadows: [Shadow(color: Color(0xFF00D4FF), blurRadius: 12)],
-      )),
+      Text(val,
+          style: const TextStyle(
+            color: Color(0xFF00D4FF),
+            fontSize: 20,
+            fontWeight: FontWeight.w900,
+            shadows: [Shadow(color: Color(0xFF00D4FF), blurRadius: 12)],
+          )),
       const SizedBox(height: 2),
-      Text(label, style: const TextStyle(
-        color: Color(0xFF2A3A4A), fontSize: 8, letterSpacing: 2, fontWeight: FontWeight.w700,
-      )),
+      Text(label,
+          style: const TextStyle(
+            color: Color(0xFF2A3A4A),
+            fontSize: 8,
+            letterSpacing: 2,
+            fontWeight: FontWeight.w700,
+          )),
     ]);
   }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  Privacy Policy Sheet — loads local HTML asset
+//  Privacy Policy Screen
 // ═══════════════════════════════════════════════════════════════════════════════
-
-
 
 class PrivacyPolicyScreen extends StatefulWidget {
   const PrivacyPolicyScreen({super.key});
@@ -667,7 +879,8 @@ class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
   }
 
   Future<void> _loadHtml() async {
-    final html = await rootBundle.loadString('assets/privacy_policy.html');
+    final html =
+    await rootBundle.loadString('assets/privacy_policy.html');
     await _controller.loadHtmlString(html, baseUrl: 'about:blank');
   }
 
@@ -676,14 +889,11 @@ class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFFF7F9FF),
       appBar: AppBar(
-        title: const Text(
-          'Privacy Policy',
-          style: TextStyle(
-            fontFamily: 'DM Sans',
-            fontWeight: FontWeight.w600,
-            fontSize: 16,
-          ),
-        ),
+        title: const Text('Privacy Policy',
+            style: TextStyle(
+                fontFamily: 'DM Sans',
+                fontWeight: FontWeight.w600,
+                fontSize: 16)),
         backgroundColor: const Color(0xFF0D47A1),
         foregroundColor: Colors.white,
         elevation: 0,
@@ -699,10 +909,9 @@ class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
                 children: [
                   CircularProgressIndicator(color: Color(0xFF2979FF)),
                   SizedBox(height: 12),
-                  Text(
-                    'Loading privacy policy…',
-                    style: TextStyle(color: Color(0xFF8898AA), fontSize: 13),
-                  ),
+                  Text('Loading privacy policy…',
+                      style: TextStyle(
+                          color: Color(0xFF8898AA), fontSize: 13)),
                 ],
               ),
             ),
@@ -711,7 +920,6 @@ class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
     );
   }
 }
-
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Custom Painters
@@ -724,12 +932,9 @@ class _SplashBgPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final w = size.width, h = size.height;
-
-    // Base fill
     canvas.drawRect(Rect.fromLTWH(0, 0, w, h),
         Paint()..color = const Color(0xFF02020A));
 
-    // Animated radial glow 1
     final cx1 = w * (0.3 + sin(t * 2 * pi) * 0.15);
     final cy1 = h * (0.4 + cos(t * 2 * pi) * 0.10);
     canvas.drawCircle(
@@ -741,10 +946,10 @@ class _SplashBgPainter extends CustomPainter {
             const Color(0xFF00D4FF).withOpacity(0.06),
             Colors.transparent,
           ],
-        ).createShader(Rect.fromCircle(center: Offset(cx1, cy1), radius: w * 0.55)),
+        ).createShader(Rect.fromCircle(
+            center: Offset(cx1, cy1), radius: w * 0.55)),
     );
 
-    // Animated radial glow 2
     final cx2 = w * (0.70 - sin(t * 2 * pi) * 0.12);
     final cy2 = h * (0.6 + cos(t * 2 * pi + 1.0) * 0.08);
     canvas.drawCircle(
@@ -756,10 +961,10 @@ class _SplashBgPainter extends CustomPainter {
             const Color(0xFFBB55FF).withOpacity(0.05),
             Colors.transparent,
           ],
-        ).createShader(Rect.fromCircle(center: Offset(cx2, cy2), radius: w * 0.45)),
+        ).createShader(Rect.fromCircle(
+            center: Offset(cx2, cy2), radius: w * 0.45)),
     );
 
-    // Subtle dot grid
     final dotPaint = Paint()..color = const Color(0xFF0D0D28);
     const spacing = 28.0;
     for (double x = 0; x < w + spacing; x += spacing) {
@@ -769,31 +974,34 @@ class _SplashBgPainter extends CustomPainter {
     }
   }
 
-  @override bool shouldRepaint(_SplashBgPainter o) => o.t != t;
+  @override
+  bool shouldRepaint(_SplashBgPainter o) => o.t != t;
 }
 
 class _VignettePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    // Scanlines
-    final lp = Paint()..color = Colors.black.withOpacity(0.035)..strokeWidth = 1;
+    final lp = Paint()
+      ..color = Colors.black.withOpacity(0.035)
+      ..strokeWidth = 1;
     for (double y = 0; y < size.height; y += 3) {
       canvas.drawLine(Offset(0, y), Offset(size.width, y), lp);
     }
-    // Vignette
     canvas.drawRect(
       Rect.fromLTWH(0, 0, size.width, size.height),
       Paint()
         ..shader = RadialGradient(
           colors: [Colors.transparent, Colors.black.withOpacity(0.45)],
           radius: 0.80,
-        ).createShader(Rect.fromLTWH(0, 0, size.width, size.height)),
+        ).createShader(
+            Rect.fromLTWH(0, 0, size.width, size.height)),
     );
   }
-  @override bool shouldRepaint(_) => false;
+
+  @override
+  bool shouldRepaint(_) => false;
 }
 
-// Logo icon painter — a stylised trace/mirror glyph
 class _LogoIconPainter extends CustomPainter {
   final double pulse;
   const _LogoIconPainter({required this.pulse});
@@ -808,13 +1016,13 @@ class _LogoIconPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
 
-    // Draw a stylised "T" trace path — player path glyph
-    // Outer diamond
     final outerPaint = Paint()
-      ..color = const Color(0xFF00D4FF).withOpacity(0.65 + 0.25 * pulse)
+      ..color =
+      const Color(0xFF00D4FF).withOpacity(0.65 + 0.25 * pulse)
       ..strokeWidth = 1.6
       ..style = PaintingStyle.stroke
-      ..maskFilter = MaskFilter.blur(BlurStyle.normal, 1.5 + pulse * 2);
+      ..maskFilter =
+      MaskFilter.blur(BlurStyle.normal, 1.5 + pulse * 2);
 
     final path = Path();
     path.moveTo(cx, cy - h * 0.38);
@@ -824,33 +1032,37 @@ class _LogoIconPainter extends CustomPainter {
     path.close();
     canvas.drawPath(path, outerPaint);
 
-    // Center cross (the "trace" icon)
     paintLine
       ..color = const Color(0xFF00D4FF).withOpacity(0.90)
       ..strokeWidth = 2.2
-      ..maskFilter = MaskFilter.blur(BlurStyle.normal, 2.5 + pulse * 3);
+      ..maskFilter =
+      MaskFilter.blur(BlurStyle.normal, 2.5 + pulse * 3);
 
-    canvas.drawLine(Offset(cx - w * 0.20, cy), Offset(cx + w * 0.20, cy), paintLine);
-    canvas.drawLine(Offset(cx, cy - h * 0.20), Offset(cx, cy + h * 0.20), paintLine);
+    canvas.drawLine(
+        Offset(cx - w * 0.20, cy), Offset(cx + w * 0.20, cy), paintLine);
+    canvas.drawLine(
+        Offset(cx, cy - h * 0.20), Offset(cx, cy + h * 0.20), paintLine);
 
-    // Inner dot
     canvas.drawCircle(
       Offset(cx, cy),
       3.5 + pulse * 1.5,
       Paint()
         ..color = Colors.white.withOpacity(0.90)
-        ..maskFilter = MaskFilter.blur(BlurStyle.normal, 3 + pulse * 4),
+        ..maskFilter =
+        MaskFilter.blur(BlurStyle.normal, 3 + pulse * 4),
     );
 
-    // Ghost position dot (mirrored)
     canvas.drawCircle(
       Offset(cx + w * 0.20, cy - h * 0.20),
       2.5,
       Paint()
-        ..color = const Color(0xFFBB55FF).withOpacity(0.55 + 0.40 * pulse)
-        ..maskFilter = MaskFilter.blur(BlurStyle.normal, 2 + pulse * 3),
+        ..color = const Color(0xFFBB55FF)
+            .withOpacity(0.55 + 0.40 * pulse)
+        ..maskFilter =
+        MaskFilter.blur(BlurStyle.normal, 2 + pulse * 3),
     );
   }
 
-  @override bool shouldRepaint(_LogoIconPainter o) => o.pulse != pulse;
+  @override
+  bool shouldRepaint(_LogoIconPainter o) => o.pulse != pulse;
 }

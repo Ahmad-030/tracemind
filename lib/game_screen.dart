@@ -4,15 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  TraceMind — game_screen.dart  (v5 — Overflow Fixed + Faster Clone)
+//  TraceMind — game_screen.dart  (v6 — Redesigned Mazes + Faster Clone)
 //
-//  Fixes vs v4:
-//    • RENAMED: MindMirror → TraceMind everywhere
-//    • OVERFLOW FIX: HUD stats row wrapped in Flexible/Expanded, no overflow
-//    • MAZE FIX: No walls on row 0 (top row must stay clear for goal tile path)
-//    • FASTER CLONE: ghost tick speeds increased ~25% across all tiers
-//    • All levels audited — any wall at row 0 removed
-//    • Goal tile at (0,9), start at (9,0) confirmed clear
+//  Changes vs v5:
+//    • ALL mazes redesigned: row 0 fully clear on every level
+//    • Mazes use interior walls only (rows 1-9, cols 0-9)
+//    • Clone speed significantly increased across all tiers
+//    • Countdown times reduced (tier 1: 2s, tier 2-3: 1s, tier 4-5: 1s)
+//    • Ghost tick: tier1=280ms, tier2=210ms, tier3=160ms, tier4=110ms, tier5=75ms
 // ═══════════════════════════════════════════════════════════════════════════════
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
@@ -100,298 +99,384 @@ enum _Phase { idle, playing, cloning, dead, complete, paused }
 final Map<int, int> _bestMoves = {};
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  Levels  — RULE: NO walls on row 0 (top row must be navigable)
-//            Goal is at (0,9), so row 0 col 9 must always be free.
-//            Also col 0 row 9 is start — keep clear.
+//  Levels
+//  RULE: Row 0 is ALWAYS completely clear (no walls).
+//        Goal = (0,9)  →  top-right corner (row=0, col=9) — always free.
+//        Start = (9,0) →  bottom-left corner — always free.
+//        Walls live in rows 1-9 only, and never at (9,0).
 // ═══════════════════════════════════════════════════════════════════════════════
 
 List<_Level> _buildLevels() => [
 
-  // ── TIER 1 — NOVICE ──────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════
+  //  TIER 1 — NOVICE  (gentle intro, sparse walls)
+  // ══════════════════════════════════════════════════════
 
-  _Level(name: 'OPEN FIELD',  tagline: 'Your reflection stirs.', par: 18, tier: 1, walls: {
-    const _Pos(3,2), const _Pos(3,3), const _Pos(3,4),
-    const _Pos(5,5), const _Pos(5,6),
-    const _Pos(7,3), const _Pos(7,4), const _Pos(7,5),
-    const _Pos(2,7), const _Pos(4,7),
-  }),
+  _Level(
+    name: 'OPEN FIELD', tagline: 'Your reflection stirs.', par: 18, tier: 1,
+    walls: {
+      // Two horizontal barriers with gaps
+      const _Pos(3,1), const _Pos(3,2), const _Pos(3,3), const _Pos(3,4), const _Pos(3,5),
+      const _Pos(6,4), const _Pos(6,5), const _Pos(6,6), const _Pos(6,7), const _Pos(6,8),
+      // Corner blockers
+      const _Pos(2,8), const _Pos(4,1),
+      const _Pos(8,3), const _Pos(8,7),
+    },
+  ),
 
-  _Level(name: 'CROSSROADS',  tagline: 'Which path does your shadow choose?', par: 20, tier: 1, walls: {
-    // row 1 walls — NOT row 0
-    const _Pos(1,1), const _Pos(1,2), const _Pos(1,7), const _Pos(1,8),
-    const _Pos(2,1), const _Pos(2,8),
-    const _Pos(4,3), const _Pos(4,4), const _Pos(4,5), const _Pos(4,6),
-    const _Pos(6,3), const _Pos(6,4), const _Pos(6,5), const _Pos(6,6),
-    const _Pos(8,1), const _Pos(8,2), const _Pos(8,7), const _Pos(8,8),
-    // row 9 — avoid col 0 (start)
-    const _Pos(9,2), const _Pos(9,7),
-  }),
+  _Level(
+    name: 'CROSSROADS', tagline: 'Which path does your shadow choose?', par: 20, tier: 1,
+    walls: {
+      // Plus-shaped barrier in the center
+      const _Pos(4,4), const _Pos(4,5), const _Pos(5,4), const _Pos(5,5),
+      // Arms
+      const _Pos(3,4), const _Pos(3,5),
+      const _Pos(6,4), const _Pos(6,5),
+      const _Pos(4,3), const _Pos(5,3),
+      const _Pos(4,6), const _Pos(5,6),
+      // Outer obstacles
+      const _Pos(2,1), const _Pos(2,8),
+      const _Pos(7,2), const _Pos(7,7),
+      const _Pos(9,4), const _Pos(9,5),
+    },
+  ),
 
-  _Level(name: 'THE FORK',    tagline: 'Two roads. One shadow.', par: 22, tier: 1, walls: {
-    const _Pos(1,3), const _Pos(1,4), const _Pos(1,5), const _Pos(1,6),
-    const _Pos(2,3), const _Pos(2,6),
-    const _Pos(3,3), const _Pos(3,6),
-    const _Pos(5,1), const _Pos(5,2), const _Pos(5,3),
-    const _Pos(5,7), const _Pos(5,8),
-    const _Pos(7,2), const _Pos(7,3), const _Pos(7,4),
-    const _Pos(7,6), const _Pos(7,7),
-    const _Pos(9,4), const _Pos(9,5),
-  }),
+  _Level(
+    name: 'THE FORK', tagline: 'Two roads. One shadow.', par: 22, tier: 1,
+    walls: {
+      // Vertical divider rows 2-6 col 4 with gaps
+      const _Pos(2,4), const _Pos(3,4),
+      const _Pos(5,4), const _Pos(6,4), const _Pos(7,4),
+      // Left channel
+      const _Pos(2,2), const _Pos(3,2),
+      const _Pos(5,1), const _Pos(6,1),
+      // Right channel
+      const _Pos(2,7), const _Pos(3,7),
+      const _Pos(5,8), const _Pos(6,8),
+      // Bottom
+      const _Pos(8,3), const _Pos(8,5),
+      const _Pos(9,2), const _Pos(9,7),
+    },
+  ),
 
-  _Level(name: 'SPIRAL',      tagline: 'Going in circles? So is your clone.', par: 24, tier: 1, walls: {
-    // Original had _Pos(1,*) — keep row 1, remove any row 0
-    const _Pos(1,1), const _Pos(1,2), const _Pos(1,3), const _Pos(1,4),
-    const _Pos(1,5), const _Pos(1,6), const _Pos(1,7), const _Pos(1,8),
-    const _Pos(2,1), const _Pos(2,8),
-    const _Pos(3,1), const _Pos(3,3), const _Pos(3,4), const _Pos(3,5),
-    const _Pos(3,6), const _Pos(3,8),
-    const _Pos(4,1), const _Pos(4,3), const _Pos(4,6), const _Pos(4,8),
-    const _Pos(5,1), const _Pos(5,3), const _Pos(5,4), const _Pos(5,6), const _Pos(5,8),
-    const _Pos(6,1), const _Pos(6,6), const _Pos(6,8),
-    const _Pos(7,1), const _Pos(7,2), const _Pos(7,3), const _Pos(7,4),
-    const _Pos(7,5), const _Pos(7,6), const _Pos(7,8),
-    const _Pos(8,8),
-  }),
+  _Level(
+    name: 'SPIRAL', tagline: 'Going in circles? So is your clone.', par: 26, tier: 1,
+    walls: {
+      // Outer ring with one gap on each side
+      const _Pos(1,1), const _Pos(1,2), const _Pos(1,3), const _Pos(1,4),
+      const _Pos(1,5), const _Pos(1,6), const _Pos(1,7), const _Pos(1,8),
+      const _Pos(2,1), const _Pos(3,1), const _Pos(4,1), const _Pos(5,1),
+      const _Pos(6,1), const _Pos(7,1),
+      const _Pos(8,1), const _Pos(8,2), const _Pos(8,3), const _Pos(8,4),
+      const _Pos(8,5), const _Pos(8,6), const _Pos(8,7),
+      const _Pos(2,8), const _Pos(3,8), const _Pos(4,8), const _Pos(5,8),
+      // Inner ring
+      const _Pos(3,3), const _Pos(3,4), const _Pos(3,5), const _Pos(3,6),
+      const _Pos(4,3), const _Pos(5,3), const _Pos(6,3),
+      const _Pos(6,4), const _Pos(6,5), const _Pos(6,6),
+      const _Pos(4,6), const _Pos(5,6),
+    },
+  ),
 
-  // ── TIER 2 — ADEPT ───────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════
+  //  TIER 2 — ADEPT  (denser, more deliberate pathing)
+  // ══════════════════════════════════════════════════════
 
-  _Level(name: 'CORRIDOR',    tagline: 'The long way round is still a way out.', par: 20, tier: 2, walls: {
-    const _Pos(1,1), const _Pos(1,2), const _Pos(1,4), const _Pos(1,5), const _Pos(1,6), const _Pos(1,8),
-    const _Pos(2,1), const _Pos(2,6), const _Pos(2,8),
-    const _Pos(3,1), const _Pos(3,3), const _Pos(3,4), const _Pos(3,6),
-    const _Pos(4,3), const _Pos(4,8),
-    const _Pos(5,1), const _Pos(5,2), const _Pos(5,3), const _Pos(5,5), const _Pos(5,6), const _Pos(5,8),
-    const _Pos(6,1), const _Pos(6,5),
-    const _Pos(7,1), const _Pos(7,3), const _Pos(7,4), const _Pos(7,5), const _Pos(7,7), const _Pos(7,8),
-    const _Pos(8,4),
-    const _Pos(9,2), const _Pos(9,6),
-  }),
+  _Level(
+    name: 'CORRIDOR', tagline: 'The long way round is still a way out.', par: 20, tier: 2,
+    walls: {
+      // S-shaped corridor
+      const _Pos(1,2), const _Pos(1,3), const _Pos(1,4), const _Pos(1,5), const _Pos(1,6),
+      const _Pos(2,6), const _Pos(3,6), const _Pos(3,7), const _Pos(3,8),
+      const _Pos(4,2), const _Pos(4,3), const _Pos(4,4), const _Pos(4,5),
+      const _Pos(5,1), const _Pos(5,2),
+      const _Pos(6,2), const _Pos(6,3), const _Pos(6,4), const _Pos(6,5), const _Pos(6,6),
+      const _Pos(7,6), const _Pos(7,7),
+      const _Pos(8,3), const _Pos(8,4), const _Pos(8,5), const _Pos(8,6),
+      const _Pos(9,3), const _Pos(9,7),
+    },
+  ),
 
-  _Level(name: 'CHAMBERS',    tagline: 'Every room has a door. Find the right ones.', par: 26, tier: 2, walls: {
-    const _Pos(1,1), const _Pos(1,2), const _Pos(1,7), const _Pos(1,8),
-    const _Pos(2,1), const _Pos(2,3), const _Pos(2,6), const _Pos(2,8),
-    const _Pos(3,2), const _Pos(3,3), const _Pos(3,6), const _Pos(3,7),
-    const _Pos(4,2), const _Pos(4,3), const _Pos(4,4), const _Pos(4,7), const _Pos(4,8),
-    const _Pos(5,1), const _Pos(5,2), const _Pos(5,7), const _Pos(5,8),
-    const _Pos(6,1), const _Pos(6,3), const _Pos(6,6), const _Pos(6,8),
-    const _Pos(7,1), const _Pos(7,2), const _Pos(7,7), const _Pos(7,8),
-    const _Pos(8,1), const _Pos(8,2), const _Pos(8,5), const _Pos(8,6),
-  }),
+  _Level(
+    name: 'CHAMBERS', tagline: 'Every room has a door. Find the right ones.', par: 26, tier: 2,
+    walls: {
+      // Left chamber
+      const _Pos(1,1), const _Pos(2,1), const _Pos(3,1), const _Pos(3,2), const _Pos(3,3),
+      const _Pos(2,3),
+      // Right chamber
+      const _Pos(1,7), const _Pos(2,7), const _Pos(3,7), const _Pos(3,6), const _Pos(3,5),
+      const _Pos(2,5),
+      // Center wall
+      const _Pos(4,3), const _Pos(4,4), const _Pos(4,5), const _Pos(4,6),
+      const _Pos(5,3), const _Pos(5,6),
+      // Lower chambers
+      const _Pos(6,1), const _Pos(6,2), const _Pos(7,2), const _Pos(8,2), const _Pos(8,1),
+      const _Pos(6,7), const _Pos(6,8), const _Pos(7,8), const _Pos(8,8), const _Pos(8,7),
+      const _Pos(9,4), const _Pos(9,5),
+    },
+  ),
 
-  _Level(name: 'ZIGZAG',      tagline: 'Never move in a straight line.', par: 28, tier: 2, walls: {
-    const _Pos(1,2), const _Pos(1,3), const _Pos(1,4), const _Pos(1,5),
-    const _Pos(1,6), const _Pos(1,7), const _Pos(1,8),
-    const _Pos(2,2),
-    const _Pos(3,2), const _Pos(3,3), const _Pos(3,4), const _Pos(3,5),
-    const _Pos(3,6), const _Pos(3,7),
-    const _Pos(4,7),
-    const _Pos(5,2), const _Pos(5,3), const _Pos(5,4), const _Pos(5,5),
-    const _Pos(5,6), const _Pos(5,7),
-    const _Pos(6,2),
-    const _Pos(7,2), const _Pos(7,3), const _Pos(7,4), const _Pos(7,5),
-    const _Pos(7,6), const _Pos(7,7),
-    const _Pos(8,7),
-    const _Pos(9,3), const _Pos(9,4), const _Pos(9,5), const _Pos(9,6), const _Pos(9,7),
-  }),
+  _Level(
+    name: 'ZIGZAG', tagline: 'Never move in a straight line.', par: 28, tier: 2,
+    walls: {
+      // Staggered horizontal bars
+      const _Pos(2,1), const _Pos(2,2), const _Pos(2,3), const _Pos(2,4), const _Pos(2,5), const _Pos(2,6),
+      const _Pos(4,3), const _Pos(4,4), const _Pos(4,5), const _Pos(4,6), const _Pos(4,7), const _Pos(4,8),
+      const _Pos(6,1), const _Pos(6,2), const _Pos(6,3), const _Pos(6,4), const _Pos(6,5), const _Pos(6,6),
+      const _Pos(8,2), const _Pos(8,3), const _Pos(8,4), const _Pos(8,5), const _Pos(8,6), const _Pos(8,7),
+      // Corner fillers
+      const _Pos(3,8), const _Pos(5,1), const _Pos(7,8),
+      const _Pos(9,1), const _Pos(9,8),
+    },
+  ),
 
-  _Level(name: 'THE DIVIDE',  tagline: 'Left brain, right brain. Choose wisely.', par: 26, tier: 2, walls: {
-    const _Pos(1,4), const _Pos(1,5),
-    const _Pos(2,4), const _Pos(2,5),
-    const _Pos(3,2), const _Pos(3,3), const _Pos(3,4), const _Pos(3,5), const _Pos(3,7), const _Pos(3,8),
-    const _Pos(4,2), const _Pos(4,8),
-    const _Pos(5,2), const _Pos(5,4), const _Pos(5,5), const _Pos(5,8),
-    const _Pos(6,2), const _Pos(6,4), const _Pos(6,5), const _Pos(6,8),
-    const _Pos(7,2), const _Pos(7,3), const _Pos(7,4), const _Pos(7,5), const _Pos(7,6), const _Pos(7,8),
-    const _Pos(8,4), const _Pos(8,5),
-    const _Pos(9,3), const _Pos(9,4), const _Pos(9,5), const _Pos(9,6),
-  }),
+  _Level(
+    name: 'THE DIVIDE', tagline: 'Left brain, right brain. Choose wisely.', par: 26, tier: 2,
+    walls: {
+      // Vertical divide col 4-5
+      const _Pos(1,4), const _Pos(1,5),
+      const _Pos(2,4), const _Pos(2,5),
+      const _Pos(3,4), const _Pos(3,5),
+      const _Pos(5,4), const _Pos(5,5),
+      const _Pos(6,4), const _Pos(6,5),
+      const _Pos(7,4), const _Pos(7,5),
+      // Left side obstacles
+      const _Pos(3,1), const _Pos(3,2),
+      const _Pos(5,2), const _Pos(6,2),
+      const _Pos(8,1), const _Pos(8,2),
+      // Right side obstacles
+      const _Pos(3,7), const _Pos(3,8),
+      const _Pos(5,7), const _Pos(6,7),
+      const _Pos(8,7), const _Pos(8,8),
+      const _Pos(9,3), const _Pos(9,6),
+    },
+  ),
 
-  // ── TIER 3 — SKILLED ─────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════
+  //  TIER 3 — SKILLED  (complex mazes, fewer gaps)
+  // ══════════════════════════════════════════════════════
 
-  _Level(name: 'LABYRINTH',   tagline: 'Every step you take, your shadow takes too.', par: 32, tier: 3, walls: {
-    // FIX: original had _Pos(1,*) which is fine; no row 0 walls
-    const _Pos(1,1), const _Pos(1,2), const _Pos(1,3), const _Pos(1,4),
-    const _Pos(1,5), const _Pos(1,6), const _Pos(1,7), const _Pos(1,8),
-    const _Pos(2,1), const _Pos(2,2), const _Pos(2,3), const _Pos(2,4),
-    const _Pos(2,6), const _Pos(2,7), const _Pos(2,8),
-    const _Pos(3,2), const _Pos(3,3), const _Pos(3,6), const _Pos(3,7),
-    const _Pos(4,1), const _Pos(4,2), const _Pos(4,3), const _Pos(4,4),
-    const _Pos(4,6), const _Pos(4,7), const _Pos(4,8),
-    const _Pos(5,1), const _Pos(5,2), const _Pos(5,4), const _Pos(5,7), const _Pos(5,8),
-    const _Pos(6,1), const _Pos(6,2), const _Pos(6,3), const _Pos(6,6), const _Pos(6,7), const _Pos(6,8),
-    const _Pos(7,2), const _Pos(7,3), const _Pos(7,6), const _Pos(7,7),
-    const _Pos(8,1), const _Pos(8,2), const _Pos(8,3), const _Pos(8,4),
-    const _Pos(8,6), const _Pos(8,7), const _Pos(8,8),
-    const _Pos(9,3), const _Pos(9,5), const _Pos(9,7),
-  }),
+  _Level(
+    name: 'LABYRINTH', tagline: 'Every step you take, your shadow takes too.', par: 32, tier: 3,
+    walls: {
+      // Winding corridors
+      const _Pos(1,2), const _Pos(1,3), const _Pos(1,4), const _Pos(1,5), const _Pos(1,6), const _Pos(1,7),
+      const _Pos(2,2), const _Pos(2,7),
+      const _Pos(3,2), const _Pos(3,3), const _Pos(3,4), const _Pos(3,6), const _Pos(3,7),
+      const _Pos(4,4), const _Pos(4,5), const _Pos(4,6),
+      const _Pos(5,2), const _Pos(5,3), const _Pos(5,4),
+      const _Pos(5,7), const _Pos(5,8),
+      const _Pos(6,2), const _Pos(6,6), const _Pos(6,7),
+      const _Pos(7,2), const _Pos(7,3), const _Pos(7,4), const _Pos(7,5), const _Pos(7,8),
+      const _Pos(8,5), const _Pos(8,6), const _Pos(8,7), const _Pos(8,8),
+      const _Pos(9,1), const _Pos(9,2), const _Pos(9,4), const _Pos(9,6),
+    },
+  ),
 
-  _Level(name: 'THE WEB',     tagline: 'Something is watching from the center.', par: 30, tier: 3, walls: {
-    // row 1 fine, no row 0
-    const _Pos(1,1), const _Pos(1,3), const _Pos(1,5), const _Pos(1,7),
-    const _Pos(2,2), const _Pos(2,4), const _Pos(2,6), const _Pos(2,8),
-    const _Pos(3,1), const _Pos(3,3), const _Pos(3,5), const _Pos(3,7),
-    const _Pos(4,2), const _Pos(4,4), const _Pos(4,6), const _Pos(4,8),
-    const _Pos(5,1), const _Pos(5,3), const _Pos(5,5), const _Pos(5,7),
-    const _Pos(6,2), const _Pos(6,4), const _Pos(6,6), const _Pos(6,8),
-    const _Pos(7,1), const _Pos(7,3), const _Pos(7,5), const _Pos(7,7),
-    const _Pos(8,2), const _Pos(8,4), const _Pos(8,6), const _Pos(8,8),
-    const _Pos(9,1), const _Pos(9,3), const _Pos(9,5), const _Pos(9,7),
-  }),
+  _Level(
+    name: 'THE WEB', tagline: 'Something is watching from the center.', par: 30, tier: 3,
+    walls: {
+      // Radial-ish pattern from center (5,5)
+      const _Pos(2,1), const _Pos(2,3), const _Pos(2,6), const _Pos(2,8),
+      const _Pos(3,2), const _Pos(3,5), const _Pos(3,7),
+      const _Pos(4,1), const _Pos(4,3), const _Pos(4,4), const _Pos(4,6), const _Pos(4,8),
+      const _Pos(5,2), const _Pos(5,5), const _Pos(5,7),
+      const _Pos(6,1), const _Pos(6,3), const _Pos(6,4), const _Pos(6,6), const _Pos(6,8),
+      const _Pos(7,2), const _Pos(7,5), const _Pos(7,7),
+      const _Pos(8,1), const _Pos(8,3), const _Pos(8,6), const _Pos(8,8),
+      const _Pos(9,2), const _Pos(9,4), const _Pos(9,6), const _Pos(9,8),
+    },
+  ),
 
-  _Level(name: 'DEAD ENDS',   tagline: 'Not every corridor leads somewhere.', par: 34, tier: 3, walls: {
-    const _Pos(1,2), const _Pos(1,3), const _Pos(1,4), const _Pos(1,6), const _Pos(1,7),
-    const _Pos(2,2), const _Pos(2,7),
-    const _Pos(3,2), const _Pos(3,3), const _Pos(3,4), const _Pos(3,5), const _Pos(3,7), const _Pos(3,8),
-    const _Pos(4,5), const _Pos(4,8),
-    const _Pos(5,2), const _Pos(5,3), const _Pos(5,5), const _Pos(5,6),
-    const _Pos(6,2), const _Pos(6,6), const _Pos(6,7), const _Pos(6,8),
-    const _Pos(7,2), const _Pos(7,3), const _Pos(7,4), const _Pos(7,5), const _Pos(7,8),
-    const _Pos(8,1), const _Pos(8,5), const _Pos(8,8),
-    const _Pos(9,1), const _Pos(9,2), const _Pos(9,4), const _Pos(9,5),
-  }),
+  _Level(
+    name: 'DEAD ENDS', tagline: 'Not every corridor leads somewhere.', par: 34, tier: 3,
+    walls: {
+      // Many dead-end pockets
+      const _Pos(1,2), const _Pos(1,3), const _Pos(1,6), const _Pos(1,7),
+      const _Pos(2,2), const _Pos(2,4), const _Pos(2,5), const _Pos(2,7),
+      const _Pos(3,1), const _Pos(3,4), const _Pos(3,5), const _Pos(3,8),
+      const _Pos(4,1), const _Pos(4,3), const _Pos(4,6), const _Pos(4,8),
+      const _Pos(5,2), const _Pos(5,3), const _Pos(5,6), const _Pos(5,7),
+      const _Pos(6,1), const _Pos(6,4), const _Pos(6,5), const _Pos(6,8),
+      const _Pos(7,2), const _Pos(7,4), const _Pos(7,6), const _Pos(7,8),
+      const _Pos(8,3), const _Pos(8,5), const _Pos(8,7),
+      const _Pos(9,1), const _Pos(9,3), const _Pos(9,5), const _Pos(9,7),
+    },
+  ),
 
-  _Level(name: 'THE CAGE',    tagline: 'Freedom is just one wall away.', par: 36, tier: 3, walls: {
-    // Original had row 1 walls — fine. No row 0.
-    const _Pos(1,1), const _Pos(1,2), const _Pos(1,3), const _Pos(1,4),
-    const _Pos(1,5), const _Pos(1,6), const _Pos(1,7), const _Pos(1,8),
-    const _Pos(2,1), const _Pos(2,4), const _Pos(2,8),
-    const _Pos(3,1), const _Pos(3,3), const _Pos(3,4), const _Pos(3,5), const _Pos(3,7), const _Pos(3,8),
-    const _Pos(4,1), const _Pos(4,3), const _Pos(4,5), const _Pos(4,7), const _Pos(4,8),
-    const _Pos(5,1), const _Pos(5,3), const _Pos(5,5), const _Pos(5,7),
-    const _Pos(6,1), const _Pos(6,2), const _Pos(6,3), const _Pos(6,5), const _Pos(6,7), const _Pos(6,8),
-    const _Pos(7,1), const _Pos(7,5), const _Pos(7,8),
-    const _Pos(8,1), const _Pos(8,2), const _Pos(8,3), const _Pos(8,5), const _Pos(8,6), const _Pos(8,8),
-    const _Pos(9,3), const _Pos(9,6),
-  }),
+  _Level(
+    name: 'THE CAGE', tagline: 'Freedom is just one wall away.', par: 36, tier: 3,
+    walls: {
+      // Outer frame rows 1-8
+      const _Pos(1,1), const _Pos(1,2), const _Pos(1,3), const _Pos(1,4),
+      const _Pos(1,5), const _Pos(1,6), const _Pos(1,7), const _Pos(1,8),
+      const _Pos(2,1), const _Pos(2,8),
+      const _Pos(3,1), const _Pos(3,8),
+      const _Pos(4,1), const _Pos(4,8),
+      const _Pos(5,1), const _Pos(5,8),
+      const _Pos(6,1), const _Pos(6,8),
+      const _Pos(7,1), const _Pos(7,8),
+      const _Pos(8,1), const _Pos(8,2), const _Pos(8,3),
+      const _Pos(8,5), const _Pos(8,6), const _Pos(8,7), const _Pos(8,8),
+      // Inner maze
+      const _Pos(3,3), const _Pos(3,4), const _Pos(3,5), const _Pos(3,6),
+      const _Pos(4,3), const _Pos(5,3), const _Pos(5,5), const _Pos(5,6),
+      const _Pos(6,3), const _Pos(6,5),
+      const _Pos(7,3), const _Pos(7,4), const _Pos(7,5), const _Pos(7,6),
+      const _Pos(9,2), const _Pos(9,4), const _Pos(9,6),
+    },
+  ),
 
-  // ── TIER 4 — EXPERT ──────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════
+  //  TIER 4 — EXPERT  (tight paths, many traps)
+  // ══════════════════════════════════════════════════════
 
-  _Level(name: 'FRACTURE',    tagline: 'Your mind is cracking at the seams.', par: 38, tier: 4, walls: {
-    const _Pos(1,1), const _Pos(1,2), const _Pos(1,3), const _Pos(1,5),
-    const _Pos(1,6), const _Pos(1,7), const _Pos(1,8),
-    const _Pos(2,1), const _Pos(2,3), const _Pos(2,5), const _Pos(2,8),
-    const _Pos(3,1), const _Pos(3,2), const _Pos(3,3), const _Pos(3,5), const _Pos(3,6), const _Pos(3,8),
-    const _Pos(4,3), const _Pos(4,5), const _Pos(4,6), const _Pos(4,8),
-    const _Pos(5,1), const _Pos(5,3), const _Pos(5,4), const _Pos(5,6), const _Pos(5,8),
-    const _Pos(6,1), const _Pos(6,3), const _Pos(6,6), const _Pos(6,7), const _Pos(6,8),
-    const _Pos(7,1), const _Pos(7,2), const _Pos(7,3), const _Pos(7,5), const _Pos(7,6), const _Pos(7,8),
-    const _Pos(8,1), const _Pos(8,5), const _Pos(8,8),
-    const _Pos(9,2), const _Pos(9,3), const _Pos(9,5), const _Pos(9,6), const _Pos(9,8),
-  }),
+  _Level(
+    name: 'FRACTURE', tagline: 'Your mind is cracking at the seams.', par: 38, tier: 4,
+    walls: {
+      const _Pos(1,1), const _Pos(1,2), const _Pos(1,4), const _Pos(1,5), const _Pos(1,7), const _Pos(1,8),
+      const _Pos(2,1), const _Pos(2,4), const _Pos(2,7),
+      const _Pos(3,1), const _Pos(3,2), const _Pos(3,4), const _Pos(3,5), const _Pos(3,7), const _Pos(3,8),
+      const _Pos(4,2), const _Pos(4,5), const _Pos(4,8),
+      const _Pos(5,1), const _Pos(5,2), const _Pos(5,4), const _Pos(5,5), const _Pos(5,7), const _Pos(5,8),
+      const _Pos(6,1), const _Pos(6,4), const _Pos(6,7),
+      const _Pos(7,1), const _Pos(7,2), const _Pos(7,4), const _Pos(7,5), const _Pos(7,7), const _Pos(7,8),
+      const _Pos(8,2), const _Pos(8,5), const _Pos(8,8),
+      const _Pos(9,1), const _Pos(9,3), const _Pos(9,5), const _Pos(9,7),
+    },
+  ),
 
-  _Level(name: 'MIRROR MAZE', tagline: 'Which reflection is the real one?', par: 40, tier: 4, walls: {
-    const _Pos(1,1), const _Pos(1,2), const _Pos(1,3), const _Pos(1,4),
-    const _Pos(1,6), const _Pos(1,7), const _Pos(1,8),
-    const _Pos(2,1), const _Pos(2,4), const _Pos(2,6),
-    const _Pos(3,1), const _Pos(3,2), const _Pos(3,3), const _Pos(3,4),
-    const _Pos(3,6), const _Pos(3,7), const _Pos(3,8),
-    const _Pos(4,3), const _Pos(4,8),
-    const _Pos(5,1), const _Pos(5,3), const _Pos(5,4), const _Pos(5,5),
-    const _Pos(5,6), const _Pos(5,7), const _Pos(5,8),
-    const _Pos(6,1), const _Pos(6,3),
-    const _Pos(7,1), const _Pos(7,2), const _Pos(7,3), const _Pos(7,5), const _Pos(7,6), const _Pos(7,8),
-    const _Pos(8,1), const _Pos(8,5), const _Pos(8,8),
-    const _Pos(9,2), const _Pos(9,4), const _Pos(9,5), const _Pos(9,7), const _Pos(9,8),
-  }),
+  _Level(
+    name: 'MIRROR MAZE', tagline: 'Which reflection is the real one?', par: 40, tier: 4,
+    walls: {
+      const _Pos(1,1), const _Pos(1,2), const _Pos(1,3), const _Pos(1,6), const _Pos(1,7), const _Pos(1,8),
+      const _Pos(2,3), const _Pos(2,4), const _Pos(2,5), const _Pos(2,6),
+      const _Pos(3,1), const _Pos(3,3), const _Pos(3,6), const _Pos(3,8),
+      const _Pos(4,1), const _Pos(4,2), const _Pos(4,4), const _Pos(4,5), const _Pos(4,7), const _Pos(4,8),
+      const _Pos(5,2), const _Pos(5,4), const _Pos(5,5), const _Pos(5,7),
+      const _Pos(6,1), const _Pos(6,3), const _Pos(6,6), const _Pos(6,8),
+      const _Pos(7,1), const _Pos(7,2), const _Pos(7,4), const _Pos(7,5), const _Pos(7,7), const _Pos(7,8),
+      const _Pos(8,3), const _Pos(8,4), const _Pos(8,5), const _Pos(8,6),
+      const _Pos(9,1), const _Pos(9,2), const _Pos(9,6), const _Pos(9,7), const _Pos(9,8),
+    },
+  ),
 
-  _Level(name: 'VORTEX',      tagline: 'The center pulls everything in.', par: 42, tier: 4, walls: {
-    const _Pos(1,1), const _Pos(1,2), const _Pos(1,3), const _Pos(1,4),
-    const _Pos(1,5), const _Pos(1,6), const _Pos(1,7),
-    const _Pos(2,1), const _Pos(2,7),
-    const _Pos(3,1), const _Pos(3,3), const _Pos(3,4), const _Pos(3,5), const _Pos(3,6), const _Pos(3,7),
-    const _Pos(4,1), const _Pos(4,3), const _Pos(4,5),
-    const _Pos(5,1), const _Pos(5,3), const _Pos(5,4), const _Pos(5,5), const _Pos(5,7), const _Pos(5,8),
-    const _Pos(6,1), const _Pos(6,3), const _Pos(6,7), const _Pos(6,8),
-    const _Pos(7,1), const _Pos(7,2), const _Pos(7,3), const _Pos(7,5),
-    const _Pos(7,6), const _Pos(7,7), const _Pos(7,8),
-    const _Pos(8,3), const _Pos(8,8),
-    const _Pos(9,1), const _Pos(9,2), const _Pos(9,4), const _Pos(9,5), const _Pos(9,6), const _Pos(9,7),
-  }),
+  _Level(
+    name: 'VORTEX', tagline: 'The center pulls everything in.', par: 42, tier: 4,
+    walls: {
+      const _Pos(1,1), const _Pos(1,2), const _Pos(1,3), const _Pos(1,5), const _Pos(1,6), const _Pos(1,7), const _Pos(1,8),
+      const _Pos(2,1), const _Pos(2,5), const _Pos(2,8),
+      const _Pos(3,1), const _Pos(3,2), const _Pos(3,3), const _Pos(3,5), const _Pos(3,7), const _Pos(3,8),
+      const _Pos(4,3), const _Pos(4,5), const _Pos(4,7),
+      const _Pos(5,1), const _Pos(5,3), const _Pos(5,4), const _Pos(5,5), const _Pos(5,6), const _Pos(5,8),
+      const _Pos(6,1), const _Pos(6,3), const _Pos(6,6), const _Pos(6,8),
+      const _Pos(7,1), const _Pos(7,2), const _Pos(7,4), const _Pos(7,6), const _Pos(7,7), const _Pos(7,8),
+      const _Pos(8,2), const _Pos(8,4), const _Pos(8,7),
+      const _Pos(9,1), const _Pos(9,3), const _Pos(9,5), const _Pos(9,6), const _Pos(9,8),
+    },
+  ),
 
-  _Level(name: 'THE ASYLUM',  tagline: 'You built these walls yourself.', par: 44, tier: 4, walls: {
-    const _Pos(1,1), const _Pos(1,3), const _Pos(1,4), const _Pos(1,5), const _Pos(1,6), const _Pos(1,8),
-    const _Pos(2,1), const _Pos(2,3), const _Pos(2,6), const _Pos(2,8),
-    const _Pos(3,1), const _Pos(3,2), const _Pos(3,3), const _Pos(3,6), const _Pos(3,7), const _Pos(3,8),
-    const _Pos(4,3), const _Pos(4,4), const _Pos(4,5), const _Pos(4,6),
-    const _Pos(5,1), const _Pos(5,2), const _Pos(5,3), const _Pos(5,6), const _Pos(5,7), const _Pos(5,8),
-    const _Pos(6,3), const _Pos(6,4), const _Pos(6,5), const _Pos(6,6),
-    const _Pos(7,1), const _Pos(7,3), const _Pos(7,6), const _Pos(7,8),
-    const _Pos(8,1), const _Pos(8,3), const _Pos(8,4), const _Pos(8,6), const _Pos(8,8),
-    const _Pos(9,2), const _Pos(9,3), const _Pos(9,5), const _Pos(9,6), const _Pos(9,8),
-  }),
+  _Level(
+    name: 'THE ASYLUM', tagline: 'You built these walls yourself.', par: 44, tier: 4,
+    walls: {
+      const _Pos(1,1), const _Pos(1,3), const _Pos(1,4), const _Pos(1,5), const _Pos(1,7), const _Pos(1,8),
+      const _Pos(2,1), const _Pos(2,3), const _Pos(2,5), const _Pos(2,7),
+      const _Pos(3,1), const _Pos(3,2), const _Pos(3,5), const _Pos(3,7), const _Pos(3,8),
+      const _Pos(4,2), const _Pos(4,3), const _Pos(4,5), const _Pos(4,6), const _Pos(4,8),
+      const _Pos(5,1), const _Pos(5,3), const _Pos(5,5), const _Pos(5,8),
+      const _Pos(6,1), const _Pos(6,3), const _Pos(6,4), const _Pos(6,5), const _Pos(6,7),
+      const _Pos(7,1), const _Pos(7,3), const _Pos(7,7), const _Pos(7,8),
+      const _Pos(8,1), const _Pos(8,2), const _Pos(8,4), const _Pos(8,5), const _Pos(8,7),
+      const _Pos(9,2), const _Pos(9,4), const _Pos(9,6), const _Pos(9,8),
+    },
+  ),
 
-  // ── TIER 5 — MASTER ──────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════
+  //  TIER 5 — MASTER  (brutal density, near-perfect play required)
+  // ══════════════════════════════════════════════════════
 
-  _Level(name: 'SHATTERED',   tagline: 'The mirror has broken. So have you.', par: 46, tier: 5, walls: {
-    const _Pos(1,1), const _Pos(1,2), const _Pos(1,4), const _Pos(1,5), const _Pos(1,6), const _Pos(1,8),
-    const _Pos(2,2), const _Pos(2,4), const _Pos(2,6), const _Pos(2,8),
-    const _Pos(3,1), const _Pos(3,2), const _Pos(3,4), const _Pos(3,6), const _Pos(3,7), const _Pos(3,8),
-    const _Pos(4,1), const _Pos(4,4), const _Pos(4,5), const _Pos(4,7),
-    const _Pos(5,2), const _Pos(5,3), const _Pos(5,5), const _Pos(5,7), const _Pos(5,8),
-    const _Pos(6,1), const _Pos(6,3), const _Pos(6,5), const _Pos(6,7),
-    const _Pos(7,1), const _Pos(7,2), const _Pos(7,4), const _Pos(7,5), const _Pos(7,6), const _Pos(7,8),
-    const _Pos(8,2), const _Pos(8,4), const _Pos(8,6), const _Pos(8,8),
-    const _Pos(9,1), const _Pos(9,3), const _Pos(9,4), const _Pos(9,6), const _Pos(9,7),
-  }),
+  _Level(
+    name: 'SHATTERED', tagline: 'The mirror has broken. So have you.', par: 46, tier: 5,
+    walls: {
+      const _Pos(1,1), const _Pos(1,2), const _Pos(1,4), const _Pos(1,6), const _Pos(1,7), const _Pos(1,8),
+      const _Pos(2,2), const _Pos(2,4), const _Pos(2,5), const _Pos(2,7),
+      const _Pos(3,1), const _Pos(3,3), const _Pos(3,5), const _Pos(3,7), const _Pos(3,8),
+      const _Pos(4,1), const _Pos(4,3), const _Pos(4,4), const _Pos(4,6), const _Pos(4,8),
+      const _Pos(5,2), const _Pos(5,4), const _Pos(5,6), const _Pos(5,8),
+      const _Pos(6,1), const _Pos(6,2), const _Pos(6,4), const _Pos(6,6), const _Pos(6,7),
+      const _Pos(7,1), const _Pos(7,3), const _Pos(7,5), const _Pos(7,7), const _Pos(7,8),
+      const _Pos(8,2), const _Pos(8,3), const _Pos(8,5), const _Pos(8,7),
+      const _Pos(9,1), const _Pos(9,3), const _Pos(9,4), const _Pos(9,6), const _Pos(9,8),
+    },
+  ),
 
-  _Level(name: 'NEURON',      tagline: 'Think faster. Your clone already has.', par: 48, tier: 5, walls: {
-    const _Pos(1,1), const _Pos(1,2), const _Pos(1,3), const _Pos(1,5), const _Pos(1,7), const _Pos(1,8),
-    const _Pos(2,1), const _Pos(2,3), const _Pos(2,5), const _Pos(2,7),
-    const _Pos(3,1), const _Pos(3,2), const _Pos(3,4), const _Pos(3,5), const _Pos(3,7), const _Pos(3,8),
-    const _Pos(4,2), const _Pos(4,4), const _Pos(4,6), const _Pos(4,8),
-    const _Pos(5,1), const _Pos(5,2), const _Pos(5,4), const _Pos(5,6), const _Pos(5,7),
-    const _Pos(6,1), const _Pos(6,3), const _Pos(6,4), const _Pos(6,6), const _Pos(6,8),
-    const _Pos(7,1), const _Pos(7,3), const _Pos(7,5), const _Pos(7,6), const _Pos(7,8),
-    const _Pos(8,2), const _Pos(8,3), const _Pos(8,5), const _Pos(8,7), const _Pos(8,8),
-    const _Pos(9,1), const _Pos(9,3), const _Pos(9,4), const _Pos(9,6), const _Pos(9,8),
-  }),
+  _Level(
+    name: 'NEURON', tagline: 'Think faster. Your clone already has.', par: 48, tier: 5,
+    walls: {
+      const _Pos(1,1), const _Pos(1,2), const _Pos(1,4), const _Pos(1,5), const _Pos(1,7), const _Pos(1,8),
+      const _Pos(2,2), const _Pos(2,4), const _Pos(2,6), const _Pos(2,8),
+      const _Pos(3,1), const _Pos(3,3), const _Pos(3,4), const _Pos(3,6), const _Pos(3,8),
+      const _Pos(4,1), const _Pos(4,3), const _Pos(4,5), const _Pos(4,6), const _Pos(4,8),
+      const _Pos(5,2), const _Pos(5,3), const _Pos(5,5), const _Pos(5,7), const _Pos(5,8),
+      const _Pos(6,1), const _Pos(6,3), const _Pos(6,5), const _Pos(6,6), const _Pos(6,8),
+      const _Pos(7,1), const _Pos(7,2), const _Pos(7,4), const _Pos(7,6), const _Pos(7,7),
+      const _Pos(8,2), const _Pos(8,4), const _Pos(8,5), const _Pos(8,7), const _Pos(8,8),
+      const _Pos(9,1), const _Pos(9,3), const _Pos(9,5), const _Pos(9,6), const _Pos(9,8),
+    },
+  ),
 
-  _Level(name: 'OBLIVION',    tagline: 'There is no path. And yet you must walk.', par: 50, tier: 5, walls: {
-    const _Pos(1,1), const _Pos(1,2), const _Pos(1,3), const _Pos(1,4),
-    const _Pos(1,6), const _Pos(1,7), const _Pos(1,8),
-    const _Pos(2,1), const _Pos(2,4), const _Pos(2,6),
-    const _Pos(3,1), const _Pos(3,2), const _Pos(3,4), const _Pos(3,5), const _Pos(3,6), const _Pos(3,7),
-    const _Pos(4,2), const _Pos(4,5), const _Pos(4,7), const _Pos(4,8),
-    const _Pos(5,1), const _Pos(5,2), const _Pos(5,3), const _Pos(5,5), const _Pos(5,7),
-    const _Pos(6,1), const _Pos(6,3), const _Pos(6,5), const _Pos(6,6), const _Pos(6,8),
-    const _Pos(7,1), const _Pos(7,3), const _Pos(7,4), const _Pos(7,6), const _Pos(7,8),
-    const _Pos(8,1), const _Pos(8,4), const _Pos(8,6), const _Pos(8,7), const _Pos(8,8),
-    const _Pos(9,2), const _Pos(9,3), const _Pos(9,5), const _Pos(9,7), const _Pos(9,8),
-  }),
+  _Level(
+    name: 'OBLIVION', tagline: 'There is no path. And yet you must walk.', par: 50, tier: 5,
+    walls: {
+      const _Pos(1,1), const _Pos(1,2), const _Pos(1,3), const _Pos(1,5), const _Pos(1,6), const _Pos(1,8),
+      const _Pos(2,1), const _Pos(2,3), const _Pos(2,5), const _Pos(2,6), const _Pos(2,8),
+      const _Pos(3,1), const _Pos(3,2), const _Pos(3,4), const _Pos(3,6), const _Pos(3,8),
+      const _Pos(4,2), const _Pos(4,4), const _Pos(4,5), const _Pos(4,7), const _Pos(4,8),
+      const _Pos(5,1), const _Pos(5,2), const _Pos(5,4), const _Pos(5,6), const _Pos(5,7),
+      const _Pos(6,1), const _Pos(6,3), const _Pos(6,4), const _Pos(6,6), const _Pos(6,8),
+      const _Pos(7,1), const _Pos(7,3), const _Pos(7,5), const _Pos(7,6), const _Pos(7,8),
+      const _Pos(8,2), const _Pos(8,3), const _Pos(8,5), const _Pos(8,7), const _Pos(8,8),
+      const _Pos(9,1), const _Pos(9,2), const _Pos(9,4), const _Pos(9,6), const _Pos(9,7),
+    },
+  ),
 
-  _Level(name: 'FINAL MIRROR',tagline: 'Face yourself. One last time.', par: 54, tier: 5, walls: {
-    // FIX: original had _Pos(1,*) row — fine, no row 0
-    const _Pos(1,1), const _Pos(1,2), const _Pos(1,3), const _Pos(1,4),
-    const _Pos(1,5), const _Pos(1,6), const _Pos(1,7), const _Pos(1,8),
-    const _Pos(2,1), const _Pos(2,8),
-    const _Pos(3,1), const _Pos(3,2), const _Pos(3,3), const _Pos(3,5),
-    const _Pos(3,6), const _Pos(3,7), const _Pos(3,8),
-    const _Pos(4,1), const _Pos(4,3), const _Pos(4,5), const _Pos(4,7),
-    const _Pos(5,1), const _Pos(5,2), const _Pos(5,3), const _Pos(5,5), const _Pos(5,7), const _Pos(5,8),
-    const _Pos(6,1), const _Pos(6,3), const _Pos(6,5), const _Pos(6,7), const _Pos(6,8),
-    const _Pos(7,1), const _Pos(7,3), const _Pos(7,4), const _Pos(7,5), const _Pos(7,6), const _Pos(7,8),
-    const _Pos(8,1), const _Pos(8,3), const _Pos(8,6), const _Pos(8,8),
-    const _Pos(9,2), const _Pos(9,3), const _Pos(9,5), const _Pos(9,6), const _Pos(9,7), const _Pos(9,8),
-  }),
+  _Level(
+    name: 'FINAL MIRROR', tagline: 'Face yourself. One last time.', par: 54, tier: 5,
+    walls: {
+      const _Pos(1,1), const _Pos(1,2), const _Pos(1,3), const _Pos(1,4),
+      const _Pos(1,6), const _Pos(1,7), const _Pos(1,8),
+      const _Pos(2,1), const _Pos(2,4), const _Pos(2,6), const _Pos(2,8),
+      const _Pos(3,1), const _Pos(3,2), const _Pos(3,4), const _Pos(3,6), const _Pos(3,7), const _Pos(3,8),
+      const _Pos(4,2), const _Pos(4,4), const _Pos(4,5), const _Pos(4,8),
+      const _Pos(5,1), const _Pos(5,2), const _Pos(5,3), const _Pos(5,5), const _Pos(5,7), const _Pos(5,8),
+      const _Pos(6,1), const _Pos(6,3), const _Pos(6,5), const _Pos(6,7),
+      const _Pos(7,1), const _Pos(7,2), const _Pos(7,4), const _Pos(7,5), const _Pos(7,7), const _Pos(7,8),
+      const _Pos(8,2), const _Pos(8,4), const _Pos(8,6), const _Pos(8,8),
+      const _Pos(9,1), const _Pos(9,3), const _Pos(9,4), const _Pos(9,6), const _Pos(9,7), const _Pos(9,8),
+    },
+  ),
 ];
 
 // ─── Tier metadata ────────────────────────────────────────────────────────────
 
 const _tierNames = ['', 'NOVICE', 'ADEPT', 'SKILLED', 'EXPERT', 'MASTER'];
 
-// FASTER clone speeds (reduced ~25-30% from v4)
+// ─── FASTER clone speeds + SHORTER countdown ─────────────────────────────────
+// Significantly faster than v5: ~30-40% speed increase
+
 Duration _ghostTickForTier(int t) {
   switch (t.clamp(1, 5)) {
-    case 1: return const Duration(milliseconds: 380);  // was 520
-    case 2: return const Duration(milliseconds: 300);  // was 420
-    case 3: return const Duration(milliseconds: 230);  // was 320
-    case 4: return const Duration(milliseconds: 170);  // was 240
-    case 5: return const Duration(milliseconds: 120);  // was 170
-    default: return const Duration(milliseconds: 300);
+    case 1: return const Duration(milliseconds: 280);  // was 380  (faster start)
+    case 2: return const Duration(milliseconds: 210);  // was 300
+    case 3: return const Duration(milliseconds: 155);  // was 230
+    case 4: return const Duration(milliseconds: 105);  // was 170
+    case 5: return const Duration(milliseconds: 70);   // was 120  (nearly instant)
+    default: return const Duration(milliseconds: 280);
   }
 }
 
-int _countdownForTier(int t) => [0, 3, 3, 2, 2, 1][t.clamp(1, 5)];
+// Shorter countdowns: tier1 = 2s, tier2-3 = 1s, tier4-5 = 1s
+int _countdownForTier(int t) => [0, 2, 1, 1, 1, 1][t.clamp(1, 5)];
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  GameScreen
@@ -803,9 +888,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ─── HUD — OVERFLOW FIX ───────────────────────────────────────────────────
-  // The overflow was caused by the stats Row having too many chips on small
-  // screens. Fix: wrap stats in a Flexible, use Wrap instead of Row for chips.
+  // ─── HUD ──────────────────────────────────────────────────────────────────
 
   Widget _buildHUD() {
     final tc = _C.tierColors[_lvl.tier];
@@ -822,10 +905,9 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          // ── Row 1: Logo + Buttons ──
+          // Row 1: Logo + Buttons
           Row(
             children: [
-              // Animated shimmer title
               AnimatedBuilder(
                 animation: _acHudPulse,
                 builder: (_, __) => ShaderMask(
@@ -849,12 +931,10 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           ),
           const SizedBox(height: 7),
 
-          // ── Row 2: Level info + phase indicator ──
-          // FIX: use Row with Flexible around stats area to prevent overflow
+          // Row 2: Level info
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              // Tier dot
               Container(
                 width: 7, height: 7,
                 decoration: BoxDecoration(
@@ -863,13 +943,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                 ),
               ),
               const SizedBox(width: 5),
-              // Level number
               Text('LVL ${_lvlIdx + 1}', style: TextStyle(
                 color: tc.withOpacity(0.9), fontSize: 10,
                 fontWeight: FontWeight.w900, letterSpacing: 2,
               )),
               const SizedBox(width: 5),
-              // Level name — flexible so it can shrink
               Flexible(
                 flex: 2,
                 child: Text(_lvl.name,
@@ -881,7 +959,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                 ),
               ),
               const SizedBox(width: 6),
-              // Stat chips
               _statChip(_moves.toString(), _C.accent1, 'MV'),
               const SizedBox(width: 4),
               _statChip(_lvl.par.toString(), _C.textSub, 'PAR'),
@@ -889,13 +966,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                 const SizedBox(width: 4),
                 _statChip(_bestMoves[_lvlIdx].toString(), _C.gold, 'BEST'),
               ],
-              // Phase indicator pushed to end with minimum intrusion
               const SizedBox(width: 6),
               _buildPhaseIndicator(),
             ],
           ),
 
-          // Countdown badge
           if (_countdown > 0) ...[
             const SizedBox(height: 8),
             _buildCountdownBar(),
@@ -1517,7 +1592,6 @@ class _PauseDialogState extends State<_PauseDialog> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Icon badge
               Container(
                 width: 46, height: 46,
                 decoration: BoxDecoration(
