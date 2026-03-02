@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:mindmirror/splash_screen.dart';
+import 'package:mindmirror/splash_screen.dart' show SplashScreen;
 import 'game_screen.dart';
 
 void main() {

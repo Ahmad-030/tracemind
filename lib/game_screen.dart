@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  TraceMind — game_screen.dart  (v6 — Redesigned Mazes + Faster Clone)
@@ -12,7 +13,10 @@ import 'package:flutter/services.dart';
 //    • Clone speed significantly increased across all tiers
 //    • Countdown times reduced (tier 1: 2s, tier 2-3: 1s, tier 4-5: 1s)
 //    • Ghost tick: tier1=280ms, tier2=210ms, tier3=160ms, tier4=110ms, tier5=75ms
+//    • Saves progress to SharedPreferences on level completion
 // ═══════════════════════════════════════════════════════════════════════════════
+
+const String _kSavedLevelKey = 'saved_level_index';
 
 // ─── Palette ──────────────────────────────────────────────────────────────────
 
@@ -100,25 +104,19 @@ final Map<int, int> _bestMoves = {};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Levels
-//  RULE: Row 0 is ALWAYS completely clear (no walls).
-//        Goal = (0,9)  →  top-right corner (row=0, col=9) — always free.
-//        Start = (9,0) →  bottom-left corner — always free.
-//        Walls live in rows 1-9 only, and never at (9,0).
 // ═══════════════════════════════════════════════════════════════════════════════
 
 List<_Level> _buildLevels() => [
 
   // ══════════════════════════════════════════════════════
-  //  TIER 1 — NOVICE  (gentle intro, sparse walls)
+  //  TIER 1 — NOVICE
   // ══════════════════════════════════════════════════════
 
   _Level(
     name: 'OPEN FIELD', tagline: 'Your reflection stirs.', par: 18, tier: 1,
     walls: {
-      // Two horizontal barriers with gaps
       const _Pos(3,1), const _Pos(3,2), const _Pos(3,3), const _Pos(3,4), const _Pos(3,5),
       const _Pos(6,4), const _Pos(6,5), const _Pos(6,6), const _Pos(6,7), const _Pos(6,8),
-      // Corner blockers
       const _Pos(2,8), const _Pos(4,1),
       const _Pos(8,3), const _Pos(8,7),
     },
@@ -127,14 +125,11 @@ List<_Level> _buildLevels() => [
   _Level(
     name: 'CROSSROADS', tagline: 'Which path does your shadow choose?', par: 20, tier: 1,
     walls: {
-      // Plus-shaped barrier in the center
       const _Pos(4,4), const _Pos(4,5), const _Pos(5,4), const _Pos(5,5),
-      // Arms
       const _Pos(3,4), const _Pos(3,5),
       const _Pos(6,4), const _Pos(6,5),
       const _Pos(4,3), const _Pos(5,3),
       const _Pos(4,6), const _Pos(5,6),
-      // Outer obstacles
       const _Pos(2,1), const _Pos(2,8),
       const _Pos(7,2), const _Pos(7,7),
       const _Pos(9,4), const _Pos(9,5),
@@ -144,16 +139,12 @@ List<_Level> _buildLevels() => [
   _Level(
     name: 'THE FORK', tagline: 'Two roads. One shadow.', par: 22, tier: 1,
     walls: {
-      // Vertical divider rows 2-6 col 4 with gaps
       const _Pos(2,4), const _Pos(3,4),
       const _Pos(5,4), const _Pos(6,4), const _Pos(7,4),
-      // Left channel
       const _Pos(2,2), const _Pos(3,2),
       const _Pos(5,1), const _Pos(6,1),
-      // Right channel
       const _Pos(2,7), const _Pos(3,7),
       const _Pos(5,8), const _Pos(6,8),
-      // Bottom
       const _Pos(8,3), const _Pos(8,5),
       const _Pos(9,2), const _Pos(9,7),
     },
@@ -162,7 +153,6 @@ List<_Level> _buildLevels() => [
   _Level(
     name: 'SPIRAL', tagline: 'Going in circles? So is your clone.', par: 26, tier: 1,
     walls: {
-      // Outer ring with one gap on each side
       const _Pos(1,1), const _Pos(1,2), const _Pos(1,3), const _Pos(1,4),
       const _Pos(1,5), const _Pos(1,6), const _Pos(1,7), const _Pos(1,8),
       const _Pos(2,1), const _Pos(3,1), const _Pos(4,1), const _Pos(5,1),
@@ -170,7 +160,6 @@ List<_Level> _buildLevels() => [
       const _Pos(8,1), const _Pos(8,2), const _Pos(8,3), const _Pos(8,4),
       const _Pos(8,5), const _Pos(8,6), const _Pos(8,7),
       const _Pos(2,8), const _Pos(3,8), const _Pos(4,8), const _Pos(5,8),
-      // Inner ring
       const _Pos(3,3), const _Pos(3,4), const _Pos(3,5), const _Pos(3,6),
       const _Pos(4,3), const _Pos(5,3), const _Pos(6,3),
       const _Pos(6,4), const _Pos(6,5), const _Pos(6,6),
@@ -179,13 +168,12 @@ List<_Level> _buildLevels() => [
   ),
 
   // ══════════════════════════════════════════════════════
-  //  TIER 2 — ADEPT  (denser, more deliberate pathing)
+  //  TIER 2 — ADEPT
   // ══════════════════════════════════════════════════════
 
   _Level(
     name: 'CORRIDOR', tagline: 'The long way round is still a way out.', par: 20, tier: 2,
     walls: {
-      // S-shaped corridor
       const _Pos(1,2), const _Pos(1,3), const _Pos(1,4), const _Pos(1,5), const _Pos(1,6),
       const _Pos(2,6), const _Pos(3,6), const _Pos(3,7), const _Pos(3,8),
       const _Pos(4,2), const _Pos(4,3), const _Pos(4,4), const _Pos(4,5),
@@ -200,16 +188,12 @@ List<_Level> _buildLevels() => [
   _Level(
     name: 'CHAMBERS', tagline: 'Every room has a door. Find the right ones.', par: 26, tier: 2,
     walls: {
-      // Left chamber
       const _Pos(1,1), const _Pos(2,1), const _Pos(3,1), const _Pos(3,2), const _Pos(3,3),
       const _Pos(2,3),
-      // Right chamber
       const _Pos(1,7), const _Pos(2,7), const _Pos(3,7), const _Pos(3,6), const _Pos(3,5),
       const _Pos(2,5),
-      // Center wall
       const _Pos(4,3), const _Pos(4,4), const _Pos(4,5), const _Pos(4,6),
       const _Pos(5,3), const _Pos(5,6),
-      // Lower chambers
       const _Pos(6,1), const _Pos(6,2), const _Pos(7,2), const _Pos(8,2), const _Pos(8,1),
       const _Pos(6,7), const _Pos(6,8), const _Pos(7,8), const _Pos(8,8), const _Pos(8,7),
       const _Pos(9,4), const _Pos(9,5),
@@ -219,12 +203,10 @@ List<_Level> _buildLevels() => [
   _Level(
     name: 'ZIGZAG', tagline: 'Never move in a straight line.', par: 28, tier: 2,
     walls: {
-      // Staggered horizontal bars
       const _Pos(2,1), const _Pos(2,2), const _Pos(2,3), const _Pos(2,4), const _Pos(2,5), const _Pos(2,6),
       const _Pos(4,3), const _Pos(4,4), const _Pos(4,5), const _Pos(4,6), const _Pos(4,7), const _Pos(4,8),
       const _Pos(6,1), const _Pos(6,2), const _Pos(6,3), const _Pos(6,4), const _Pos(6,5), const _Pos(6,6),
       const _Pos(8,2), const _Pos(8,3), const _Pos(8,4), const _Pos(8,5), const _Pos(8,6), const _Pos(8,7),
-      // Corner fillers
       const _Pos(3,8), const _Pos(5,1), const _Pos(7,8),
       const _Pos(9,1), const _Pos(9,8),
     },
@@ -233,18 +215,15 @@ List<_Level> _buildLevels() => [
   _Level(
     name: 'THE DIVIDE', tagline: 'Left brain, right brain. Choose wisely.', par: 26, tier: 2,
     walls: {
-      // Vertical divide col 4-5
       const _Pos(1,4), const _Pos(1,5),
       const _Pos(2,4), const _Pos(2,5),
       const _Pos(3,4), const _Pos(3,5),
       const _Pos(5,4), const _Pos(5,5),
       const _Pos(6,4), const _Pos(6,5),
       const _Pos(7,4), const _Pos(7,5),
-      // Left side obstacles
       const _Pos(3,1), const _Pos(3,2),
       const _Pos(5,2), const _Pos(6,2),
       const _Pos(8,1), const _Pos(8,2),
-      // Right side obstacles
       const _Pos(3,7), const _Pos(3,8),
       const _Pos(5,7), const _Pos(6,7),
       const _Pos(8,7), const _Pos(8,8),
@@ -253,13 +232,12 @@ List<_Level> _buildLevels() => [
   ),
 
   // ══════════════════════════════════════════════════════
-  //  TIER 3 — SKILLED  (complex mazes, fewer gaps)
+  //  TIER 3 — SKILLED
   // ══════════════════════════════════════════════════════
 
   _Level(
     name: 'LABYRINTH', tagline: 'Every step you take, your shadow takes too.', par: 32, tier: 3,
     walls: {
-      // Winding corridors
       const _Pos(1,2), const _Pos(1,3), const _Pos(1,4), const _Pos(1,5), const _Pos(1,6), const _Pos(1,7),
       const _Pos(2,2), const _Pos(2,7),
       const _Pos(3,2), const _Pos(3,3), const _Pos(3,4), const _Pos(3,6), const _Pos(3,7),
@@ -276,7 +254,6 @@ List<_Level> _buildLevels() => [
   _Level(
     name: 'THE WEB', tagline: 'Something is watching from the center.', par: 30, tier: 3,
     walls: {
-      // Radial-ish pattern from center (5,5)
       const _Pos(2,1), const _Pos(2,3), const _Pos(2,6), const _Pos(2,8),
       const _Pos(3,2), const _Pos(3,5), const _Pos(3,7),
       const _Pos(4,1), const _Pos(4,3), const _Pos(4,4), const _Pos(4,6), const _Pos(4,8),
@@ -291,7 +268,6 @@ List<_Level> _buildLevels() => [
   _Level(
     name: 'DEAD ENDS', tagline: 'Not every corridor leads somewhere.', par: 34, tier: 3,
     walls: {
-      // Many dead-end pockets
       const _Pos(1,2), const _Pos(1,3), const _Pos(1,6), const _Pos(1,7),
       const _Pos(2,2), const _Pos(2,4), const _Pos(2,5), const _Pos(2,7),
       const _Pos(3,1), const _Pos(3,4), const _Pos(3,5), const _Pos(3,8),
@@ -307,7 +283,6 @@ List<_Level> _buildLevels() => [
   _Level(
     name: 'THE CAGE', tagline: 'Freedom is just one wall away.', par: 36, tier: 3,
     walls: {
-      // Outer frame rows 1-8
       const _Pos(1,1), const _Pos(1,2), const _Pos(1,3), const _Pos(1,4),
       const _Pos(1,5), const _Pos(1,6), const _Pos(1,7), const _Pos(1,8),
       const _Pos(2,1), const _Pos(2,8),
@@ -318,7 +293,6 @@ List<_Level> _buildLevels() => [
       const _Pos(7,1), const _Pos(7,8),
       const _Pos(8,1), const _Pos(8,2), const _Pos(8,3),
       const _Pos(8,5), const _Pos(8,6), const _Pos(8,7), const _Pos(8,8),
-      // Inner maze
       const _Pos(3,3), const _Pos(3,4), const _Pos(3,5), const _Pos(3,6),
       const _Pos(4,3), const _Pos(5,3), const _Pos(5,5), const _Pos(5,6),
       const _Pos(6,3), const _Pos(6,5),
@@ -328,7 +302,7 @@ List<_Level> _buildLevels() => [
   ),
 
   // ══════════════════════════════════════════════════════
-  //  TIER 4 — EXPERT  (tight paths, many traps)
+  //  TIER 4 — EXPERT
   // ══════════════════════════════════════════════════════
 
   _Level(
@@ -392,7 +366,7 @@ List<_Level> _buildLevels() => [
   ),
 
   // ══════════════════════════════════════════════════════
-  //  TIER 5 — MASTER  (brutal density, near-perfect play required)
+  //  TIER 5 — MASTER
   // ══════════════════════════════════════════════════════
 
   _Level(
@@ -461,21 +435,17 @@ List<_Level> _buildLevels() => [
 
 const _tierNames = ['', 'NOVICE', 'ADEPT', 'SKILLED', 'EXPERT', 'MASTER'];
 
-// ─── FASTER clone speeds + SHORTER countdown ─────────────────────────────────
-// Significantly faster than v5: ~30-40% speed increase
-
 Duration _ghostTickForTier(int t) {
   switch (t.clamp(1, 5)) {
-    case 1: return const Duration(milliseconds: 280);  // was 380  (faster start)
-    case 2: return const Duration(milliseconds: 210);  // was 300
-    case 3: return const Duration(milliseconds: 155);  // was 230
-    case 4: return const Duration(milliseconds: 105);  // was 170
-    case 5: return const Duration(milliseconds: 70);   // was 120  (nearly instant)
+    case 1: return const Duration(milliseconds: 280);
+    case 2: return const Duration(milliseconds: 210);
+    case 3: return const Duration(milliseconds: 155);
+    case 4: return const Duration(milliseconds: 105);
+    case 5: return const Duration(milliseconds: 70);
     default: return const Duration(milliseconds: 280);
   }
 }
 
-// Shorter countdowns: tier1 = 2s, tier2-3 = 1s, tier4-5 = 1s
 int _countdownForTier(int t) => [0, 2, 1, 1, 1, 1][t.clamp(1, 5)];
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -525,7 +495,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   Timer? _particleTicker;
   Timer? _flashTicker;
 
-  // Animation controllers
   late final AnimationController _acBg;
   late final AnimationController _acGoal;
   late final AnimationController _acWall;
@@ -569,6 +538,13 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     _particleTicker?.cancel();
     _flashTicker?.cancel();
     super.dispose();
+  }
+
+  // ─── Save progress ────────────────────────────────────────────────────────
+
+  Future<void> _saveProgress(int levelIdx) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_kSavedLevelKey, levelIdx);
   }
 
   // ─── Logic ───────────────────────────────────────────────────────────────
@@ -676,6 +652,10 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     if (!_bestMoves.containsKey(_lvlIdx) || _moves < _bestMoves[_lvlIdx]!) {
       _bestMoves[_lvlIdx] = _moves;
     }
+    // ── Save progress: next level index (or 0 if last level) ──
+    final nextLevel = (_lvlIdx < _levels.length - 1) ? _lvlIdx + 1 : 0;
+    _saveProgress(nextLevel);
+
     _acWin.forward(from: 0);
     _triggerFlash(_C.goal, 0.22);
     final sw = MediaQuery.of(context).size.width;
@@ -771,6 +751,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
   void _goToLevel(int idx) {
     _lvlIdx = idx.clamp(0, _levels.length - 1);
+    _saveProgress(_lvlIdx); // save when jumping to a level
     _resetLevel();
   }
 
@@ -905,7 +886,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Row 1: Logo + Buttons
           Row(
             children: [
               AnimatedBuilder(
@@ -931,7 +911,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           ),
           const SizedBox(height: 7),
 
-          // Row 2: Level info
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
